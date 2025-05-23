@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import {
   SafeAreaView,
   FlatList,
@@ -14,8 +14,19 @@ import {
 import axios from 'axios';
 import uuid from 'react-native-uuid';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import { Animated } from 'react-native';
 
 const STORAGE_KEY = 'TODO_LIST';
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowAlert: true,
+    shouldPlaySound: false,
+    shouldSetBadge: false,
+  }),
+});
 
 export default function App() {
   const [todos, setTodos] = useState([]);
@@ -25,18 +36,28 @@ export default function App() {
   const [priority, setPriority] = useState('low');
   const [editModalVisible, setEditModalVisible] = useState(false);
   const [currentEdit, setCurrentEdit] = useState(null);
+  const [progress, setProgress] = useState(0);
+  const animatedProgress = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    Animated.timing(animatedProgress, {
+      toValue: progress,
+      duration: 500,
+      useNativeDriver: false,
+    }).start();
+  }, [progress]);
 
   const fetchTodos = async () => {
     try {
       const response = await axios.get('https://dummyjson.com/todos');
-      const todosWithColors = response.data.todos.map(todo => ({
+      const todosWithExtras = response.data.todos.map(todo => ({
         ...todo,
         id: uuid.v4(),
         date: new Date().toISOString().split('T')[0],
         priority: 'low',
         color: getRandomColor(),
       }));
-      setTodos(todosWithColors);
+      setTodos(todosWithExtras);
     } catch (error) {
       console.error('Error fetching todos:', error);
     }
@@ -63,6 +84,23 @@ export default function App() {
     } catch (e) {
       console.error('❌ Помилка завантаження з AsyncStorage:', e);
       return null;
+    }
+  };
+
+  const scheduleNotification = async (todo) => {
+    if (Device.isDevice) {
+      const trigger = new Date(todo.date);
+      trigger.setHours(9);
+      trigger.setMinutes(0);
+      trigger.setSeconds(0);
+      await Notifications.scheduleNotificationAsync({
+        content: {
+          title: "Нагадування",
+          body: `Завдання: ${todo.todo}`,
+          data: { id: todo.id },
+        },
+        trigger,
+      });
     }
   };
 
@@ -96,6 +134,7 @@ export default function App() {
       priority,
     };
     setTodos([newItem, ...todos]);
+    scheduleNotification(newItem);
     setNewTodo('');
     setNewDate('');
     setPriority('low');
@@ -115,6 +154,7 @@ export default function App() {
     setTodos(prev =>
       prev.map(t => (t.id === currentEdit.id ? { ...currentEdit } : t))
     );
+    scheduleNotification(currentEdit);
     setEditModalVisible(false);
     setCurrentEdit(null);
   };
@@ -126,6 +166,11 @@ export default function App() {
   const getIncompleteCount = () => {
     return todos.filter(todo => !todo.completed).length;
   };
+
+  const progressColor = animatedProgress.interpolate({
+    inputRange: [0, 0.25, 0.5, 0.75, 1],
+    outputRange: ['#F44336', '#FF9800', '#FFC107', '#8BC34A', '#4CAF50']
+  });
 
   const renderItem = ({ item }) => (
     <TouchableOpacity
@@ -185,6 +230,15 @@ export default function App() {
           Невиконано: {getIncompleteCount()}
         </Text>
       </View>
+
+      <View style={styles.progressBarContainer}>
+        <Animated.View style={[styles.progressBar, { width: animatedProgress.interpolate({ inputRange: [0, 1], outputRange: ['0%', '100%'] }), backgroundColor: progressColor }]} />
+      </View>
+      <TouchableOpacity
+        style={styles.nextButton}
+        onPress={() => setProgress(prev => (prev >= 1 ? 0 : prev + 0.25))}>
+        <Text style={styles.addButtonText}>➡️ NEXT</Text>
+      </TouchableOpacity>
 
       {loading ? (
         <ActivityIndicator size="large" color="#0000ff" />
@@ -262,7 +316,6 @@ const styles = StyleSheet.create({
   deleteBtn: { fontSize: 20, color: '#E53935' },
   dateText: { fontSize: 14, color: '#666' },
   priorityText: { fontSize: 14, color: '#333', fontWeight: 'bold' },
-
   inputContainer: {
     flexDirection: 'column',
     marginHorizontal: 20,
@@ -303,7 +356,6 @@ const styles = StyleSheet.create({
   low: { backgroundColor: '#8BC34A' },
   medium: { backgroundColor: '#FFC107' },
   high: { backgroundColor: '#F44336' },
-
   addButton: {
     backgroundColor: '#4CAF50',
     borderRadius: 8,
@@ -314,7 +366,26 @@ const styles = StyleSheet.create({
     fontSize: 20,
     color: '#FFF',
   },
-
+  progressBarContainer: {
+    height: 20,
+    marginHorizontal: 20,
+    borderRadius: 10,
+    backgroundColor: '#EEE',
+    overflow: 'hidden',
+    marginBottom: 10,
+  },
+  progressBar: {
+    height: '100%',
+    borderRadius: 10,
+  },
+  nextButton: {
+    backgroundColor: '#2196F3',
+    marginHorizontal: 20,
+    marginBottom: 10,
+    borderRadius: 8,
+    alignItems: 'center',
+    padding: 10,
+  },
   modalOverlay: {
     flex: 1,
     justifyContent: 'center',
@@ -357,7 +428,6 @@ const styles = StyleSheet.create({
     color: '#FFF',
     fontSize: 16,
   },
-
   incompleteContainer: {
     marginHorizontal: 20,
     marginBottom: 10,
